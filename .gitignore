@@ -2,3 +2,8 @@
 /include
 /lib
 /data/studies.json
+/src/config/config.py
+
+__pycache__/
+
+pyvenv.cfg
