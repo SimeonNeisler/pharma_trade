@@ -5,7 +5,6 @@ import pandas as pd
 from datetime import datetime, timedelta
 import psycopg as ppg
 
-import config.config as dbConfig
 import data_models.Study as Study
 
 # Constants
@@ -25,8 +24,8 @@ FIELDS = [
 
 # Date range
 TODAY = datetime.today()
-WINDOW_DAYS = 60
-END_DATE = TODAY + timedelta(days=WINDOW_DAYS)
+#WINDOW_DAYS = 60
+#END_DATE = TODAY + timedelta(days=WINDOW_DAYS)
 
 class ClinicalTrialsAggregator:
 
@@ -43,6 +42,16 @@ class ClinicalTrialsAggregator:
             self.cursor.close()
         if self.conn:
             self.conn.close()
+
+    def fetch_companies_from_db(self):
+        """Fetch companies from the database."""
+        self.cursor.execute("SELECT ticker, clinical_trials_search_phrases FROM companies")
+        rows = self.cursor.fetchall()
+        companies_list = []
+        for row in rows:
+            search_phrases = row[1].replace('"', "").replace("{", "").replace("}", "").split(",")
+            companies_list.append((row[0], search_phrases))
+        return companies_list
 
     def parse_study(self, study):
         """Parse a single study entry into a Study object."""
@@ -92,62 +101,68 @@ class ClinicalTrialsAggregator:
         try:
             self.cursor.execute(
                 """
-                INSERT INTO clinical_trials (nctid, title, phase, pcd, primary_sponsor, conditions)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO clinical_trials (nctid, title, phase, pcd, primary_sponsor, primary_sponsor_ticker, conditions)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (nctid) DO NOTHING
                 """,
-                (study.nctid, study.title, study.phase, study.pcd, study.primary_sponsor, study.conditions)
+                (study.nctid, study.title, study.phase, study.pcd, study.primary_sponsor, study.primary_sponsor_ticker, study.conditions)
             )
             self.conn.commit()
         except Exception as e:
             print(f"Error writing to DB: {e}")
             self.conn.rollback()
         
-    def fetch_upcoming_trials_v2(self, companies, window_days=60, output_csv="clinical_trials_pipeline_output_v2.csv"):
+    def fetch_upcoming_trials_v2(self, window_days=15, output_csv="clinical_trials_pipeline_output_v2.csv"):
         """Fetch Phase 2/3 trials with primary completion dates in next X days using V2 API."""
-        
+        companies = self.fetch_companies_from_db()
         
         for company in companies:
-            
-            params = {
-                'format': 'json',
-                'filter.overallStatus': 'RECRUITING,ACTIVE_NOT_RECRUITING',
-                'filter.advanced': 'AREA[Phase]PHASE3,AREA[LeadSponsorClass]INDUSTRY,AREA[LeadSponsorName]{}'.format(company),
-                'fields': ','.join(FIELDS)
-            }
-            
-            page_token = None
-            while True:
-                if page_token:
-                    params["pageToken"] = page_token
-                
-                try:
-                    response = requests.get(BASE_URL, params=params)
-                    with open('../data/studies.json', 'w') as f:
-                        json.dump(response.json(), f, indent=2) # indent=4 specifies 4 spaces for indentation
-                    data = response.json()
-                    response.raise_for_status()
+            ticker = company[0]
+            continue_querying = True
+            for search_phrase in company[1]:
+                params = {
+                    'format': 'json',
+                    'filter.overallStatus': 'RECRUITING,ACTIVE_NOT_RECRUITING',
+                    'filter.advanced': 'AREA[Phase]PHASE3,AREA[LeadSponsorClass]INDUSTRY,AREA[LeadSponsorName]{}'.format(search_phrase),
+                    'fields': ','.join(FIELDS)
+                }
+                continue_querying = True
+                page_token = None
+                while True:
+                    if page_token:
+                        params["pageToken"] = page_token
                     
-                except Exception as e:
-                    print(f"Error fetching trials for {company}: {e}")
-                    break
-                
-                # Process each study (updated for studies.json structure)
-                for study in data["studies"]:
-                    study = self.parse_study(study)
-                    if not study:
-                        continue
-
-                    if study.phase not in ["PHASE2", "PHASE3", "PHASE2/PHASE3"]:
-                        continue
+                    try:
+                        response = requests.get(BASE_URL, params=params)
+                        with open('../data/studies.json', 'w') as f:
+                            json.dump(response.json(), f, indent=2) # indent=2 specifies 2 spaces for indentation
+                        data = response.json()
+                        response.raise_for_status()
+                        
+                    except Exception as e:
+                        print(f"Error fetching trials for {ticker}: {e}")
+                        break
                     
-                    # Filter date window
-                    if TODAY <= study.pcd <= (TODAY + timedelta(days=window_days)):
-                        self.write_to_db(study)
-                
-                # Check for next page
-                page_token = data.get("nextPageToken")
-                if not page_token:
+                    # Process each study (updated for studies.json structure)
+                    if len(data.get("studies", [])) > 0:
+                        continue_querying = False
+                    for study in data["studies"]:
+                        study = self.parse_study(study)
+                        if not study:
+                            continue
+                        else:
+                            study.add_ticker(ticker)
+                        if study.phase not in ["PHASE2", "PHASE3", "PHASE2/PHASE3"]:
+                            continue
+                        
+                        # Filter date window
+                        #if TODAY <= study.pcd <= (TODAY + timedelta(days=window_days)):
+                        if TODAY <= study.pcd:
+                            self.write_to_db(study)
+                    
+                    # Check for next page
+                    page_token = data.get("nextPageToken")
+                    if not page_token:
+                        break
+                if not continue_querying:
                     break
-
-

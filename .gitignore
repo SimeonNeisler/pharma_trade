@@ -3,7 +3,8 @@
 /lib
 /data/studies.json
 /src/config/config.py
-
+/data
+/src/utils
 __pycache__/
 
 pyvenv.cfg

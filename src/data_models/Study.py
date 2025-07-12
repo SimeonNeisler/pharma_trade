@@ -10,3 +10,6 @@ class Study:
     def __repr__(self):
         return f"Study(study_id={self.nctid}, title={self.title}, phase={self.phase}, pcd_str={self.pcd.strftime('%Y-%m-%d') if self.pcd else None}, primary_sponsor={self.primary_sponsor}, conditions={self.conditions})"
     
+    def add_ticker(self, ticker):
+        self.primary_sponsor_ticker = ticker
+    

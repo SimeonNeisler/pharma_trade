@@ -40,17 +40,17 @@ class AlpacaTradingClient:
         """
         Get studies from database where primary completion date is within 2 weeks
         """
-        two_weeks = datetime.now() + timedelta(days=30)
+        two_months = datetime.now() + timedelta(days=60)
         
         self.cursor.execute("""
-            SELECT nctid, title, phase, pcd, primary_sponsor, conditions 
+            SELECT nctid, title, phase, pcd, primary_sponsor, primary_sponsor_ticker, conditions 
             FROM clinical_trials 
             WHERE pcd <= %s
             ORDER BY pcd ASC
-        """, (two_weeks,))
+        """, (two_months,))
         
         return self.cursor.fetchall()
-
+    '''
     def get_ticker_symbol(self, company_name):
         """
         Convert company name to stock ticker symbol.
@@ -70,7 +70,7 @@ class AlpacaTradingClient:
         }
         
         return company_map.get(company_name)
-
+    '''
     def get_stock_price(self, ticker):
         """
         Get the closest strike price to current stock price
@@ -95,14 +95,17 @@ class AlpacaTradingClient:
 
             strike_price_lower_bound = stock_price - 5
             strike_price_upper_bound = stock_price + 5
-
-            date_lower_bound = target_date - timedelta(days=3)
-            date_upper_bound = target_date + timedelta(days=3)
-
-            #atm_strike = min(strikes, key=lambda x: abs(x - current_price))
+            
+            date_lower_bound = target_date - timedelta(days=7)
+            date_upper_bound = target_date + timedelta(days=7)
 
             optionContractsRequest = GetOptionContractsRequest(root_symbol=ticker, style="american", type="call", expiration_date_gte=date_lower_bound.strftime('%Y-%m-%d'), expiration_date_lte=date_upper_bound.strftime('%Y-%m-%d'), strike_price_gte=str(strike_price_lower_bound), strike_price_lte=str(strike_price_upper_bound))
             optionResponse = self.trading_client.get_option_contracts(optionContractsRequest)
+            print("Option Contracts: ", optionResponse.option_contracts)
+            if not optionResponse.option_contracts:
+                print(f"No option contracts found for {ticker} within the specified bounds.")
+                return None, None
+            
             atm_strike = min([float(option.strike_price) for option in optionResponse.option_contracts if option.strike_price is not None], key=lambda x: abs(x - stock_price))
 
             best_date = min(optionResponse.option_contracts, key=lambda x: abs(x.expiration_date - target_date)).expiration_date
@@ -119,7 +122,7 @@ class AlpacaTradingClient:
         """
         Place at-the-money call and put orders for a given study
         """
-        ticker = self.get_ticker_symbol(study[4])  # study[4] is primary_sponsor
+        ticker = study[5] 
         if not ticker:
             print(f"No ticker found for company: {study[4]}")
             return
@@ -132,7 +135,9 @@ class AlpacaTradingClient:
         target_date_str = target_date.strftime('%Y-%m-%d')
 
         best_call, best_put = self.get_best_contract(ticker, target_date)
-
+        if not best_call or not best_put:
+            print(f"No suitable options found for {ticker} on {target_date_str}")
+            return
         try:
             # Place call order
             call_order = MarketOrderRequest(
@@ -167,7 +172,7 @@ class AlpacaTradingClient:
             # Get upcoming studies
             studies = self.get_upcoming_studies()
             if not studies:
-                print("No upcoming studies found within 2 weeks")
+                print("No upcoming studies found within 2 months")
                 return
 
             print(f"Found {len(studies)} upcoming studies")
