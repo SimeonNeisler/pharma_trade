@@ -1,39 +1,38 @@
-import json
+#import json
 
-from config.config import dbConfig, alpacaConfig
-from data_inflows.clinical_trials import ClinicalTrialsAggregator
+from config import dbConfig, alpacaConfig
+from data_inflows import ClinicalTrialsAggregator
+from data_inflows import PDUFAManager, PDUFAScraper
 from trading.order_placer import AlpacaTradingClient
-from utils.load_companies import load_companies
+from utils import BiotechScreener
 
-from alpaca.trading.requests import GetOptionContractsRequest
+#from alpaca.trading.requests import GetOptionContractsRequest
+
+#import requests
 
 def main():
     # Initialize the ClinicalTrialsAggregator with the database configuration
-    print("Starting program... ")
     aggregator = ClinicalTrialsAggregator(dbConfig)
     trader = AlpacaTradingClient(dbConfig, alpacaConfig)
+    pdufa_manager = PDUFAManager(db_settings=dbConfig)
+    biotech_screener = BiotechScreener()
+
+    results = pdufa_manager.pull_records()
+    companies = results['companies']
+
+    companies = biotech_screener.screen_biotech_companies(companies)
+
+    pdufa_manager.write_records_to_db(results['records'])
+
     # Define the companies to fetch trials for
-    companies = [
-        "Pfizer",
-        "Moderna",
-        "Eli Lilly",
-        "CRISPR",
-        "Verve",
-        "Editas",
-        "Beam",
-        "Intellia"
-    ]
-    print("Fetching trials for companies")
     # Fetch upcoming trials and save to CSV
-    aggregator.fetch_upcoming_trials_v2(window_days=15)
+    aggregator.fetch_upcoming_trials_v2()
     trader.run()
 
 
 def test():
-    aggregator = ClinicalTrialsAggregator(dbConfig)
-    # Fetch companies from the database
-    aggregator.fetch_companies_from_db()
-
+    
+    return
 
 
 if __name__ == "__main__":

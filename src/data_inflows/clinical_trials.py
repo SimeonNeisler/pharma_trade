@@ -45,7 +45,7 @@ class ClinicalTrialsAggregator:
 
     def fetch_companies_from_db(self):
         """Fetch companies from the database."""
-        self.cursor.execute("SELECT ticker, clinical_trials_search_phrases FROM companies")
+        self.cursor.execute("SELECT ticker, clinical_trials_search_phrases FROM companies WHERE alpaca_tradable = TRUE")
         rows = self.cursor.fetchall()
         companies_list = []
         for row in rows:
@@ -98,21 +98,24 @@ class ClinicalTrialsAggregator:
 
     def write_to_db(self, study):
         """Write a Study object to the database."""
+        print(study)
         try:
             self.cursor.execute(
                 """
-                INSERT INTO clinical_trials (nctid, title, phase, pcd, primary_sponsor, primary_sponsor_ticker, conditions)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO clinical_trials (nctid, title, phase, pcd, primary_sponsor, primary_sponsor_ticker, conditions, traded)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %b)
                 ON CONFLICT (nctid) DO NOTHING
                 """,
-                (study.nctid, study.title, study.phase, study.pcd, study.primary_sponsor, study.primary_sponsor_ticker, study.conditions)
+                (study.nctid, study.title, study.phase, study.pcd, study.primary_sponsor, study.primary_sponsor_ticker, study.conditions, False)
             )
             self.conn.commit()
         except Exception as e:
             print(f"Error writing to DB: {e}")
             self.conn.rollback()
         
-    def fetch_upcoming_trials_v2(self, window_days=15, output_csv="clinical_trials_pipeline_output_v2.csv"):
+
+    #Come back and optimize this later
+    def fetch_upcoming_trials_v2(self):
         """Fetch Phase 2/3 trials with primary completion dates in next X days using V2 API."""
         companies = self.fetch_companies_from_db()
         
@@ -155,8 +158,6 @@ class ClinicalTrialsAggregator:
                         if study.phase not in ["PHASE2", "PHASE3", "PHASE2/PHASE3"]:
                             continue
                         
-                        # Filter date window
-                        #if TODAY <= study.pcd <= (TODAY + timedelta(days=window_days)):
                         if TODAY <= study.pcd:
                             self.write_to_db(study)
                     

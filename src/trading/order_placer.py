@@ -36,41 +36,39 @@ class AlpacaTradingClient:
         if self.conn:
             self.conn.close()
 
+
+    def get_upcoming_regulatory_decisions(self):
+        """
+        Get upcoming regulatory decisions from the database
+        """
+
+        date_tomorrow = datetime.now() + timedelta(days=1)
+        date_limit = datetime.now() + timedelta(days=15)
+
+        self.cursor.execute(
+            """
+            SELECT * FROM regulatory_decisions WHERE date BETWEEN %s AND %s
+              AND status = 'pending' AND traded = FALSE""", (date_tomorrow, date_limit))
+        return self.cursor.fetchall()
+
+
+
     def get_upcoming_studies(self):
         """
         Get studies from database where primary completion date is within 2 weeks
         """
-        two_months = datetime.now() + timedelta(days=60)
+        tomorrow = datetime.now() + timedelta(days=1)
+        two_weeks = datetime.now() + timedelta(days=15)
         
         self.cursor.execute("""
             SELECT nctid, title, phase, pcd, primary_sponsor, primary_sponsor_ticker, conditions 
             FROM clinical_trials 
-            WHERE pcd <= %s
+            WHERE pcd BETWEEN %s AND %s AND traded = FALSE
             ORDER BY pcd ASC
-        """, (two_months,))
+        """, (tomorrow, two_weeks,))
         
         return self.cursor.fetchall()
-    '''
-    def get_ticker_symbol(self, company_name):
-        """
-        Convert company name to stock ticker symbol.
-        This is a simplified version - in production you'd want a more robust mapping.
-        """
-        # Basic mapping of company names to tickers
-        company_map = {
-            'Pfizer': 'PFE',
-            'Moderna': 'MRNA',
-            'Eli Lilly': 'LLY',
-            'Eli Lilly and Company': 'LLY',
-            'CRISPR': 'CRSP',
-            'Verve': 'VERV',
-            'Editas': 'EDIT',
-            'Beam': 'BEAM',
-            'Intellia': 'NTLA'
-        }
-        
-        return company_map.get(company_name)
-    '''
+    
     def get_stock_price(self, ticker):
         """
         Get the closest strike price to current stock price
@@ -81,10 +79,6 @@ class AlpacaTradingClient:
             current_price = stock.info['regularMarketPrice']
             
             return current_price
-            # Find closest strike to current price
-            atm_strike = min(strikes, key=lambda x: abs(x - current_price))
-            return atm_strike
-            
         except Exception as e:
             print(f"Error getting stock price for {ticker}: {e}")
             return None
@@ -96,8 +90,8 @@ class AlpacaTradingClient:
             strike_price_lower_bound = stock_price - 5
             strike_price_upper_bound = stock_price + 5
             
-            date_lower_bound = target_date - timedelta(days=7)
-            date_upper_bound = target_date + timedelta(days=7)
+            date_lower_bound = target_date - timedelta(days=15)
+            date_upper_bound = target_date + timedelta(days=15)
 
             optionContractsRequest = GetOptionContractsRequest(root_symbol=ticker, style="american", type="call", expiration_date_gte=date_lower_bound.strftime('%Y-%m-%d'), expiration_date_lte=date_upper_bound.strftime('%Y-%m-%d'), strike_price_gte=str(strike_price_lower_bound), strike_price_lte=str(strike_price_upper_bound))
             optionResponse = self.trading_client.get_option_contracts(optionContractsRequest)
@@ -118,20 +112,12 @@ class AlpacaTradingClient:
             print("Contracts: ", best_options.option_contracts)
             return best_options.option_contracts[0].symbol, best_options.option_contracts[1].symbol
 
-    def place_option_orders(self, study):
+    def place_option_orders(self, ticker, target_date):
         """
         Place at-the-money call and put orders for a given study
         """
-        ticker = study[5] 
-        if not ticker:
-            print(f"No ticker found for company: {study[4]}")
-            return
-
-        # Get ATM strike
 
         # Calculate option expiration (60 days after primary completion date)
-        pcd = study[3]  # study[3] is pcd
-        target_date = pcd + timedelta(days=60)
         target_date_str = target_date.strftime('%Y-%m-%d')
 
         best_call, best_put = self.get_best_contract(ticker, target_date)
@@ -157,16 +143,16 @@ class AlpacaTradingClient:
             )
             put_result = self.trading_client.submit_order(put_order)
             
-            print(f"Placed orders for {ticker} study {study[0]}:")
+            print(f"Placed orders for {ticker}")
             print(f"Call order: {call_result.id}")
             print(f"Put order: {put_result.id}")
             
         except Exception as e:
             print(f"Error placing orders for {ticker}: {e}")
 
-    def run(self):
+    def trade_on_studies(self):
         """
-        Main method to run the order placement process
+        Main method to trade on studies
         """
         try:
             # Get upcoming studies
@@ -180,10 +166,68 @@ class AlpacaTradingClient:
             # Place orders for each study
             for study in studies:
                 print(f"\nProcessing study {study[0]} for {study[4]}")
-                self.place_option_orders(study)
-                
+                ticker = study[5]
+                if not ticker:
+                    print(f"No ticker found for study {study[0]}")
+                    continue
+                target_date = study[3] + timedelta(days=60)
+
+                self.place_option_orders(ticker, target_date)
+
+                self.cursor.execute(
+                    "UPDATE clinical_trials SET traded = TRUE WHERE nctid = %s",
+                    (studies[0],)
+                )
+                self.conn.commit()
+        
         except Exception as e:
             print(f"Error in run process: {e}")
+            self.conn.rollback()
+
+    def trade_on_regulatory_decisions(self):
+        """
+        Main method to trade on regulatory decisions
+        """
+        try:
+            # Get upcoming regulatory decisions
+            decisions = self.get_upcoming_regulatory_decisions()
+            if not decisions:
+                print("No upcoming regulatory decisions found within 15 days")
+                return
+
+            print(f"Found {len(decisions)} upcoming regulatory decisions")
+            
+            # Place orders for each decision
+            for decision in decisions:
+                # decision columns: id, useu, ticker, drug_name, date, status, decision, traded
+                print(f"\nProcessing regulatory decision for {decision[3]} ({decision[2]})")
+                ticker = decision[2]
+                if not ticker:
+                    print(f"No ticker found for regulatory decision {decision[0]}")
+                    continue
+                
+                # Target expiration date is 2 weeks after the regulatory decision date
+                target_date = decision[4] + timedelta(days=14)
+                
+                self.place_option_orders(ticker, target_date)
+                
+                # Mark as traded in database
+                self.cursor.execute(
+                    "UPDATE regulatory_decisions SET traded = TRUE WHERE ticker = %s AND drug_name = %s AND date = %s",
+                    (decision[1], decision[2], decision[3])
+                )
+                self.conn.commit()
+        
+        except Exception as e:
+            print(f"Error in trade_on_regulatory_decisions: {e}")
+            self.conn.rollback()
+
+    def run(self):
+        """
+        Main method to run the order placement process
+        """
+        self.trade_on_studies()
+        self.trade_on_regulatory_decisions
 
 if __name__ == "__main__":
     from config.config import dbConfig, alpacaConfig

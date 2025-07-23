@@ -2,9 +2,11 @@
 /include
 /lib
 /data/studies.json
+src/data_inflows/demo_pdufa_data.py
 /src/config/config.py
 /data
-/src/utils
+/src/utils/load_companies.py
+/src/utils/clinical_trials_search_example.py
 __pycache__/
 
 pyvenv.cfg
