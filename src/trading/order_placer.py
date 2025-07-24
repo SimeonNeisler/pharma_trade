@@ -111,34 +111,41 @@ class AlpacaTradingClient:
 
     def write_trades_to_db(self, call, put, order_qty: int, filled_price, study_nctid: str, record_id: int):
         print("Writing trades to DB...")
-        self.cursor.execute(
-            """
-            INSERT INTO trades (symbol, call_put, ticker, expiration, strike, premium, study_id, regulatory_id, quantity)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            (call.symbol, 'CALL', call.root_symbol, call.expiration_date, call.strike_price, filled_price[0], study_nctid, record_id, order_qty))
-        
+        try:
+            self.cursor.execute(
+                """
+                INSERT INTO trades (symbol, call_put, ticker, expiration, strike, premium, study_id, regulatory_id, quantity)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (symbol) DO NOTHING
+                """,
+                (call.symbol, 'CALL', call.root_symbol, call.expiration_date, call.strike_price, filled_price[0], study_nctid, record_id, order_qty))
 
-        self.cursor.execute(
-            """
-            INSERT INTO trades (symbol, call_put, ticker, expiration, strike, premium, study_id, regulatory_id, quantity)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            (put.symbol, 'PUT', put.root_symbol, put.expiration_date, put.strike_price, filled_price[1], study_nctid, record_id, order_qty))
-        
-        if(study_nctid):
+
             self.cursor.execute(
-                "UPDATE clinical_trials SET traded = TRUE WHERE nctid = %s",
-                (study_nctid,)
-            )
-        elif(record_id):
-            self.cursor.execute(
-                "UPDATE regulatory_decisions SET traded = TRUE WHERE id = %s",
-                (record_id,)
-            )
-        self.conn.commit()
-        print("Trades written to DB successfully.")
-        return
+                """
+                INSERT INTO trades (symbol, call_put, ticker, expiration, strike, premium, study_id, regulatory_id, quantity)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (symbol) DO NOTHING
+                """,
+                (put.symbol, 'PUT', put.root_symbol, put.expiration_date, put.strike_price, filled_price[1], study_nctid, record_id, order_qty))
+
+            if(study_nctid):
+                self.cursor.execute(
+                    "UPDATE clinical_trials SET traded = TRUE WHERE nctid = %s",
+                    (study_nctid,)
+                )
+            elif(record_id):
+                self.cursor.execute(
+                    "UPDATE regulatory_decisions SET traded = TRUE WHERE id = %s",
+                    (record_id,)
+                )
+            self.conn.commit()
+            print("Trades written to DB successfully.")
+            return
+        except Exception as e:
+            print(f"Error writing trades to DB: {e}")
+            self.conn.rollback()
+            return
 
     def place_option_orders(self, ticker, target_date, study_nctid=None, record_id=None):
         """
