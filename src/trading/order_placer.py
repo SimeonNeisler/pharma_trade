@@ -95,7 +95,6 @@ class AlpacaTradingClient:
 
             optionContractsRequest = GetOptionContractsRequest(root_symbol=ticker, style="american", type="call", expiration_date_gte=date_lower_bound.strftime('%Y-%m-%d'), expiration_date_lte=date_upper_bound.strftime('%Y-%m-%d'), strike_price_gte=str(strike_price_lower_bound), strike_price_lte=str(strike_price_upper_bound))
             optionResponse = self.trading_client.get_option_contracts(optionContractsRequest)
-            print("Option Contracts: ", optionResponse.option_contracts)
             if not optionResponse.option_contracts:
                 print(f"No option contracts found for {ticker} within the specified bounds.")
                 return None, None
@@ -107,12 +106,41 @@ class AlpacaTradingClient:
             print("Best Date type: ", type(best_date))
 
             best_options = self.trading_client.get_option_contracts(GetOptionContractsRequest(root_symbol=ticker, expiration_date=best_date, style="american", strike_price_gte=str(atm_strike), strike_price_lte=str(atm_strike)))
-            #best_put = self.tradient_client.get_option_contracts(GetOptionContractsRequest(root_symbol=ticker, expiration_date=best_date, style="american", strike_price_gte=str(atm_strike), strike_price_lte=str(atm_strike)))
-            #print("Contracts lengths: ", len(best_call.option_contracts))
-            print("Contracts: ", best_options.option_contracts)
-            return best_options.option_contracts[0].symbol, best_options.option_contracts[1].symbol
+            return best_options.option_contracts[0], best_options.option_contracts[1]
 
-    def place_option_orders(self, ticker, target_date):
+
+    def write_trades_to_db(self, call, put, order_qty: int, filled_price, study_nctid: str, record_id: int):
+        print("Writing trades to DB...")
+        self.cursor.execute(
+            """
+            INSERT INTO trades (symbol, call_put, ticker, expiration, strike, premium, study_id, regulatory_id, quantity)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (call.symbol, 'CALL', call.root_symbol, call.expiration_date, call.strike_price, filled_price[0], study_nctid, record_id, order_qty))
+        
+
+        self.cursor.execute(
+            """
+            INSERT INTO trades (symbol, call_put, ticker, expiration, strike, premium, study_id, regulatory_id, quantity)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (put.symbol, 'PUT', put.root_symbol, put.expiration_date, put.strike_price, filled_price[1], study_nctid, record_id, order_qty))
+        
+        if(study_nctid):
+            self.cursor.execute(
+                "UPDATE clinical_trials SET traded = TRUE WHERE nctid = %s",
+                (study_nctid,)
+            )
+        elif(record_id):
+            self.cursor.execute(
+                "UPDATE regulatory_decisions SET traded = TRUE WHERE id = %s",
+                (record_id,)
+            )
+        self.conn.commit()
+        print("Trades written to DB successfully.")
+        return
+
+    def place_option_orders(self, ticker, target_date, study_nctid=None, record_id=None):
         """
         Place at-the-money call and put orders for a given study
         """
@@ -123,12 +151,13 @@ class AlpacaTradingClient:
         best_call, best_put = self.get_best_contract(ticker, target_date)
         if not best_call or not best_put:
             print(f"No suitable options found for {ticker} on {target_date_str}")
-            return
+            return 1, None
         try:
+            order_quantity = 1
             # Place call order
             call_order = MarketOrderRequest(
-                symbol=best_call,
-                qty=1,
+                symbol=best_call.symbol,
+                qty=order_quantity,
                 side=OrderSide.BUY,
                 time_in_force=TimeInForce.DAY
             )
@@ -136,19 +165,23 @@ class AlpacaTradingClient:
             
             # Place put order
             put_order = MarketOrderRequest(
-                symbol=best_put,
-                qty=1,
+                symbol=best_put.symbol,
+                qty=order_quantity,
                 side=OrderSide.BUY,
                 time_in_force=TimeInForce.DAY
             )
             put_result = self.trading_client.submit_order(put_order)
+
+            self.write_trades_to_db(call=best_call, put=best_put, order_qty=order_quantity, filled_price=(call_result.filled_avg_price, put_result.filled_avg_price), study_nctid=study_nctid, record_id=record_id)
             
             print(f"Placed orders for {ticker}")
             print(f"Call order: {call_result.id}")
             print(f"Put order: {put_result.id}")
+            return 0, None
             
         except Exception as e:
             print(f"Error placing orders for {ticker}: {e}")
+            return 2, str(e)
 
     def trade_on_studies(self):
         """
@@ -172,8 +205,13 @@ class AlpacaTradingClient:
                     continue
                 target_date = study[3] + timedelta(days=60)
 
-                self.place_option_orders(ticker, target_date)
-
+                return_code, error_code = self.place_option_orders(ticker, target_date, study_nctid=study[0], record_id=None)
+                if return_code == 1:
+                    print(f"No suitable options found for {ticker} on {target_date}")
+                    continue
+                elif return_code == 2:
+                    print(f"Error placing orders for {ticker}: {error_code}")
+                    continue
                 self.cursor.execute(
                     "UPDATE clinical_trials SET traded = TRUE WHERE nctid = %s",
                     (studies[0],)
@@ -209,8 +247,15 @@ class AlpacaTradingClient:
                 # Target expiration date is 2 weeks after the regulatory decision date
                 target_date = decision[4] + timedelta(days=14)
                 
-                self.place_option_orders(ticker, target_date)
-                
+                return_code, error_code = self.place_option_orders(ticker, target_date, record_id=decision[7])
+
+                if return_code == 1:
+                    print(f"No suitable options found for {ticker} on {target_date}")
+                    continue
+                elif return_code == 2:
+                    print(f"Error placing orders for {ticker}: {error_code}")
+                    continue
+
                 # Mark as traded in database
                 self.cursor.execute(
                     "UPDATE regulatory_decisions SET traded = TRUE WHERE ticker = %s AND drug_name = %s AND date = %s",
@@ -221,6 +266,7 @@ class AlpacaTradingClient:
         except Exception as e:
             print(f"Error in trade_on_regulatory_decisions: {e}")
             self.conn.rollback()
+
 
     def run(self):
         """

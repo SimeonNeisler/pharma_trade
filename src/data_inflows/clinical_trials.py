@@ -30,7 +30,6 @@ TODAY = datetime.today()
 class ClinicalTrialsAggregator:
 
     def __init__(self, dbConfig):
-        print(dbConfig)
         self.conn = ppg.connect(dbname=dbConfig.DB_NAME,
                                 user=dbConfig.DB_USER,
                                 host=dbConfig.DB_HOST)
@@ -85,7 +84,6 @@ class ClinicalTrialsAggregator:
             primary_sponsor=lead_sponsor.get("name", ""),
             conditions=", ".join(cond_mod.get("conditions", []))
         )
-       #print(study)
         return study
 
     def parse_date(self, date_str):
@@ -98,7 +96,6 @@ class ClinicalTrialsAggregator:
 
     def write_to_db(self, study):
         """Write a Study object to the database."""
-        print(study)
         try:
             self.cursor.execute(
                 """

@@ -161,6 +161,7 @@ class BiotechScreener:
                 """
                 INSERT INTO companies (ticker, company_name, sector, industry, exchange, market_cap_category, alpaca_tradable, alpaca_shortable, alpaca_marginable, alpaca_fractionable, clinical_trials_search_phrases, primary_search_phrase)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (ticker) DO NOTHING
                 """,
                 (
                     company.ticker_symbol,
