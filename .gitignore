@@ -5,8 +5,12 @@
 src/data_inflows/demo_pdufa_data.py
 /src/config/config.py
 /data
+/src/frontend/config.py
+/src/utils/fetch_prices.py
 /src/utils/load_companies.py
 /src/utils/clinical_trials_search_example.py
 __pycache__/
+
+etc/
 
 pyvenv.cfg
