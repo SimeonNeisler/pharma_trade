@@ -6,16 +6,10 @@ from datetime import datetime, timedelta
 import psycopg as ppg
 import yfinance as yf
 import numpy as np
-from typing import List, Dict, Optional
+from typing import Optional
 import time
-#import sys
-#import os
-
-# Add parent directory to path to import config
-#sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import dbConfig, alpacaConfig
 from alpaca.trading.client import TradingClient
-from alpaca.data.live import StockDataStream
 from alpaca.data.requests import StockLatestQuoteRequest
 from alpaca.data.historical import StockHistoricalDataClient
 
