@@ -1,0 +1,33 @@
+# Enhanced Pharma Trading Automation Cron Jobs
+# These use the wrapper script for better logging and error handling
+
+# 1. Run trading bot every weekday at 9:30 AM (market open)
+30 9 * * 1-5 /Users/simeonneisler/Projects/pharma_trade/scripts/trading_wrapper.sh trading
+
+# 2. Run weekly data refresh (PDUFA + trials) every Monday at 9:00 AM
+0 9 * * 1 /Users/simeonneisler/Projects/pharma_trade/scripts/trading_wrapper.sh weekly
+
+# Alternative: Separate PDUFA and trials jobs (if you prefer more control)
+# 0 9 * * 1 /Users/simeonneisler/Projects/pharma_trade/scripts/trading_wrapper.sh pdufa
+# 5 9 * * 1 /Users/simeonneisler/Projects/pharma_trade/scripts/trading_wrapper.sh trials
+
+# Setup Instructions:
+# 1. Create logs directory: mkdir -p /Users/simeonneisler/Projects/pharma_trade/logs
+# 2. Test the wrapper script: /Users/simeonneisler/Projects/pharma_trade/scripts/trading_wrapper.sh trading
+# 3. Add to crontab: crontab -e
+# 4. Paste the cron job lines above (without the # comments)
+# 5. Save and exit (:wq in vim)
+# 6. Verify installation: crontab -l
+
+# Cron Schedule Format:
+# ┌───────────── minute (0 - 59)
+# │ ┌───────────── hour (0 - 23)
+# │ │ ┌───────────── day of the month (1 - 31)
+# │ │ │ ┌───────────── month (1 - 12)
+# │ │ │ │ ┌───────────── day of the week (0 - 6) (Sunday to Saturday)
+# │ │ │ │ │
+# * * * * *
+
+# Day of week codes:
+# 0 = Sunday, 1 = Monday, 2 = Tuesday, 3 = Wednesday, 4 = Thursday, 5 = Friday, 6 = Saturday
+# 1-5 = Monday through Friday (weekdays only)
